@@ -1,0 +1,1393 @@
+<!--
+保存先：project-root/public_html/index.html
+
+前提：画像は project-root/public_html/img/ に配置
+前提：音声は project-root/public_html/sound/ に配置
+
+img/
+ ├── background1.png
+ ├── ken.png         (味方 近距離)
+ ├── ken1.png        (剣を振りかざす演出)
+ ├── gun.png         (味方 中距離)
+ ├── gun1.png        (弾の演出)
+ ├── bom.png         (味方 遠距離)
+ ├── bom1.png        (飛翔中の爆弾)
+ ├── bom2.png        (爆発演出)
+ ├── teki1.png       (敵 近距離)
+ ├── teki1-1.png     (敵の剣演出)
+ ├── teki2.png       (敵 中距離)
+ ├── teki3.png       (敵 遠距離)
+ ├── shiro.png       (味方城 HP100)
+ ├── shiro1.png      (味方城 HP50)
+ ├── shiro2.png      (味方城 HP10)  ←無ければ shiro3.png を改名して用意
+ ├── tekishiro.png   (敵城 HP100)
+ ├── tekishiro1.png  (敵城 HP50)
+ └── tekishiro2.png  (敵城 HP10)
+
+sound/
+ ├── ken.mp3         (剣SE)
+ ├── gan.mp3         (銃SE)
+ ├── bom.mp3         (爆発SE)
+ └── BGM.neko.mp3    (BGM)
+
+今回の追加仕様：
+- 起動時に「イージー/ハード」選択 → 難易度パラメータを適用
+- BGMを開始ボタン押下で再生（ブラウザ自動再生制限に対応）
+- 近距離ユニットが前進しない問題の根本修正（ターゲット不在時は必ず前進）
+- 近距離: 剣振り画像を一瞬表示＋SE
+- 中距離: 弾( gun1.png )を飛ばす＋SE
+- 遠距離: 爆弾( bom1.png )を放物線で飛ばし、着弾で爆発( bom2.png )＋SE
+- 城HPに応じて城画像を切り替え（100/50/10）
+- 敵AIが召喚・攻撃・城破壊まで行う
+-->
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>画像ユニット戦争（にゃんこ風・簡易）</title>
+  <style>
+    html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#0b0f17;touch-action:manipulation}
+    #wrap{position:relative;width:100%;height:100%}
+    canvas{display:block;width:100%;height:100%}
+    .ui{position:absolute;inset:0;color:#e8eefc;font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif}
+    .top{
+      position:absolute;left:12px;right:12px;top:10px;
+      display:flex;gap:10px;align-items:center;justify-content:space-between;
+      pointer-events:none;font-weight:800;text-shadow:0 2px 12px rgba(0,0,0,.55)
+    }
+    .badge{
+      background:rgba(255,255,255,.08);
+      border:1px solid rgba(255,255,255,.12);
+      padding:6px 10px;border-radius:999px;font-size:13px
+    }
+    .barWrap{
+      flex:1;max-width:min(560px,55vw);height:18px;
+      background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);
+      border-radius:999px;overflow:hidden;box-shadow:0 10px 25px rgba(0,0,0,.25)
+    }
+    .bar{height:100%;width:0%;background:rgba(180,220,255,.85)}
+    .bottom{
+      position:absolute;left:12px;right:12px;bottom:12px;
+      display:flex;gap:10px;align-items:stretch;justify-content:space-between
+    }
+    .panel{
+      flex:1;display:flex;gap:10px;
+      background:rgba(255,255,255,.06);
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:16px;padding:10px;
+      backdrop-filter: blur(10px);
+      box-shadow:0 12px 30px rgba(0,0,0,.35)
+    }
+    .btn{
+      flex:1;min-width:0;
+      border-radius:14px;border:1px solid rgba(255,255,255,.14);
+      background:rgba(255,255,255,.08);color:#e8eefc;
+      padding:10px;text-align:left;
+      cursor:pointer;user-select:none;-webkit-user-select:none;
+      display:flex;flex-direction:column;gap:6px
+    }
+    .btn:active{transform:translateY(1px)}
+    .btn.disabled{opacity:.45;cursor:not-allowed;filter:saturate(.6)}
+    .btnTitle{font-weight:900;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .btnMeta{font-size:12px;opacity:.9;display:flex;justify-content:space-between;gap:10px}
+    .side{
+      width:min(280px,38vw);
+      display:flex;flex-direction:column;gap:8px;
+      background:rgba(255,255,255,.06);
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:16px;padding:10px;
+      backdrop-filter: blur(10px);
+      box-shadow:0 12px 30px rgba(0,0,0,.35)
+    }
+    .bigBtn{
+      width:100%;border-radius:14px;border:1px solid rgba(255,255,255,.14);
+      background:rgba(255,255,255,.08);color:#e8eefc;
+      padding:12px 10px;font-weight:900;cursor:pointer;user-select:none
+    }
+    .row{display:flex;gap:8px}
+    .miniBtn{
+      flex:1;border-radius:14px;border:1px solid rgba(255,255,255,.14);
+      background:rgba(255,255,255,.08);color:#e8eefc;
+      padding:10px;font-weight:900;cursor:pointer;user-select:none
+    }
+    .miniBtn.active{outline:2px solid rgba(180,220,255,.85)}
+    .hint{font-size:12px;opacity:.85;line-height:1.45}
+    #overlay{
+      position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+      background:rgba(0,0,0,.55);backdrop-filter:blur(6px);padding:16px
+    }
+    #card{
+      width:min(720px,94vw);
+      background:rgba(255,255,255,.08);
+      border:1px solid rgba(255,255,255,.16);
+      border-radius:18px;padding:16px;
+      box-shadow:0 18px 45px rgba(0,0,0,.45);
+      text-align:center
+    }
+    #card h1{margin:0 0 6px;font-size:18px}
+    #card p{margin:0;font-size:13px;opacity:.9;line-height:1.55}
+    #card .sub{margin-top:10px;font-size:12px;opacity:.85}
+    .modeBox{
+      margin-top:12px;
+      display:flex;flex-direction:column;gap:10px;
+      background:rgba(0,0,0,.18);
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:14px;
+      padding:12px;
+      text-align:left
+    }
+    .modeTitle{font-weight:900;font-size:13px;margin-bottom:6px}
+    .modeDesc{font-size:12px;opacity:.88;line-height:1.5}
+    .sep{height:1px;background:rgba(255,255,255,.12);margin:6px 0}
+    .danger{color:#ffd6d6}
+  </style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="cv"></canvas>
+
+  <div class="ui">
+    <div class="top">
+      <div class="badge" id="hpL">自城HP: 100</div>
+      <div class="barWrap"><div class="bar" id="energyBar"></div></div>
+      <div class="badge" id="hpR">敵城HP: 100</div>
+    </div>
+
+    <div class="bottom">
+      <div class="panel" id="unitPanel"></div>
+
+      <div class="side">
+        <button class="bigBtn" id="toggle">▶ 開始</button>
+
+        <div class="row">
+          <button class="miniBtn active" id="modeEasy">EASY</button>
+          <button class="miniBtn" id="modeHard">HARD</button>
+        </div>
+
+        <div class="hint">
+          PC：<b>1/2/3</b>で召喚 / <b>Space</b>で開始・一時停止<br/>
+          スマホ：ボタンタップで召喚<br/>
+          目的：敵城HPを0にする（敵も城を破壊する）
+        </div>
+
+        <div class="hint" id="log"></div>
+      </div>
+    </div>
+
+    <div id="overlay">
+      <div id="card">
+        <h1>画像ユニット戦争（にゃんこ風・簡易）</h1>
+        <p>最初に難易度を選択し、開始するとBGMが鳴ります（ブラウザ仕様により「開始操作」後でないと再生できません）。</p>
+
+        <div class="modeBox">
+          <div class="modeTitle">難易度を選択</div>
+          <div class="row">
+            <button class="miniBtn active" id="pickEasy">イージー</button>
+            <button class="miniBtn" id="pickHard">ハード</button>
+          </div>
+          <div class="sep"></div>
+          <div class="modeDesc" id="modeExplain">
+            イージー：敵の出現頻度・攻撃が控えめ。まず動作確認向け。
+          </div>
+          <div class="sub">右下「開始」または Space でスタート</div>
+          <div class="hint danger" id="assetWarn" style="display:none;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // =========================
+  // 0) ユーティリティ
+  // =========================
+  const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+  const rnd = (a,b)=>a+Math.random()*(b-a);
+  const nowSec = ()=>performance.now()/1000;
+
+  // =========================
+  // 1) アセット定義
+  // =========================
+  const ASSETS = {
+    bg: {
+      main: "img/background1.png",
+    },
+    ally: {
+      ken: "img/ken.png",
+      gun: "img/gun.png",
+      bom: "img/bom.png",
+    },
+    enemy: {
+      teki1: "img/teki1.png",
+      teki2: "img/teki2.png",
+      teki3: "img/teki3.png",
+    },
+    fx: {
+      kenSwing: "img/ken1.png",     // 剣の軌道
+      enemySwing: "img/teki1-1.png",// 敵の剣軌道
+      bullet: "img/gun1.png",       // 弾見た目
+      bombFly: "img/bom1.png",      // 爆弾飛翔
+      bombBoom: "img/bom2.png",     // 爆発
+    },
+    castle: {
+      ally100: "img/shiro.png",
+      ally50:  "img/shiro1.png",
+      ally10:  "img/shiro2.png",   // ここが無いとロード失敗します
+      enemy100:"img/tekishiro.png",
+      enemy50: "img/tekishiro1.png",
+      enemy10: "img/tekishiro2.png",
+    },
+    sound: {
+      ken: "sound/ken.mp3",
+      gan: "sound/gan.mp3",
+      bom: "sound/bom.mp3",
+      bgm: "sound/BGM.neko.mp3",
+    }
+  };
+
+  // =========================
+  // 2) 難易度（数値テーブル）
+  // =========================
+  const DIFFICULTY = {
+    easy: {
+      name: "イージー",
+      // 味方
+      energyRegen: 1.8,
+      energyMax: 20,
+      // 敵AI
+      aiThinkMin: 0.65,
+      aiThinkMax: 1.25,
+      aiBudgetPerSec: 1.65,
+      aiMaxBudget: 20,
+      // 敵強さ
+      enemyHpRate: 0.90,
+      enemyAtkRate: 0.85,
+      enemySpdRate: 0.95,
+      // 城
+      castleHp: 100,
+      // 調整
+      projectileSpeedRate: 1.0,
+      label: "敵の出現頻度・攻撃が控えめ。まず動作確認向け。"
+    },
+    hard: {
+      name: "ハード",
+      energyRegen: 1.5,
+      energyMax: 20,
+      aiThinkMin: 0.35,
+      aiThinkMax: 0.75,
+      aiBudgetPerSec: 2.6,
+      aiMaxBudget: 22,
+      enemyHpRate: 1.25,
+      enemyAtkRate: 1.35,
+      enemySpdRate: 1.10,
+      castleHp: 100,
+      projectileSpeedRate: 1.12,
+      label: "敵が速く強い。油断すると押し切られます。"
+    }
+  };
+
+  // =========================
+  // 3) ユニット定義（仕様反映）
+  // =========================
+  // 近距離：剣（コスト2 / HP5 / ATK2）
+  // 中距離：銃（コスト5 / HP15 / ATK4）
+  // 遠距離：爆弾（コスト10 / HP30 / ATK8）
+  //
+  // range は「攻撃判定ロジック用」
+  const UNITS_BASE = {
+    ally: {
+      ken: { name:"剣",  cost:2,  hp:5,  atk:2, atkSec:0.75, spd:110, range:26,  kind:"melee" },
+      gun: { name:"銃",  cost:5,  hp:15, atk:4, atkSec:1.05, spd:90,  range:180, kind:"ranged" },
+      bom: { name:"爆",  cost:10, hp:30, atk:8, atkSec:1.45, spd:70,  range:240, kind:"arc" },
+    },
+    enemy: {
+      teki1:{ name:"敵剣", cost:2,  hp:10, atk:2, atkSec:0.78, spd:110, range:26,  kind:"melee" },
+      teki2:{ name:"敵銃", cost:5,  hp:15, atk:4, atkSec:1.08, spd:90,  range:180, kind:"ranged" },
+      teki3:{ name:"敵爆", cost:10, hp:15, atk:8, atkSec:1.55, spd:70,  range:240, kind:"arc" },
+    }
+  };
+
+  // =========================
+  // 4) DOM / Canvas
+  // =========================
+  const cv = document.getElementById("cv");
+  const ctx = cv.getContext("2d");
+
+  const hpL = document.getElementById("hpL");
+  const hpR = document.getElementById("hpR");
+  const energyBar = document.getElementById("energyBar");
+  const unitPanel = document.getElementById("unitPanel");
+  const toggleBtn = document.getElementById("toggle");
+  const overlay = document.getElementById("overlay");
+  const card = document.getElementById("card");
+  const logEl = document.getElementById("log");
+
+  const modeEasyBtn = document.getElementById("modeEasy");
+  const modeHardBtn = document.getElementById("modeHard");
+
+  const pickEasyBtn = document.getElementById("pickEasy");
+  const pickHardBtn = document.getElementById("pickHard");
+  const modeExplain = document.getElementById("modeExplain");
+  const assetWarn = document.getElementById("assetWarn");
+
+  // =========================
+  // 5) 状態
+  // =========================
+  const S = {
+    running:false,
+    ended:false,
+    ready:false,
+    t:0,
+    dpr:1,
+    w:0,h:0,
+    groundY:0,
+    laneY:0,
+
+    // mode
+    mode:"easy",
+    D: DIFFICULTY.easy,
+
+    // energy
+    e:0,
+    eMax:20,
+
+    // ai
+    aiBudget:0,
+    aiThink:0,
+
+    // castles
+    castleL: { hp:100, hpMax:100, x:0, w:0 },
+    castleR: { hp:100, hpMax:100, x:0, w:0 },
+
+    // lists
+    units: [],
+    projectiles: [],
+    effects: [],
+
+    // images
+    img: new Map(),
+    // background
+    bgImg: null,
+
+    // audio
+    audioReady:false,
+    bgm:null,
+    sePool: { ken:[], gan:[], bom:[] },
+
+    // for debug
+    lastError:""
+  };
+
+  // =========================
+  // 6) 画面サイズ
+  // =========================
+  function resize(){
+    const dpr = Math.max(1, Math.min(3, window.devicePixelRatio||1));
+    S.dpr = dpr;
+
+    const r = cv.getBoundingClientRect();
+    const cssW = Math.max(360, r.width);
+    const cssH = Math.max(640, r.height);
+
+    cv.width = Math.floor(cssW*dpr);
+    cv.height= Math.floor(cssH*dpr);
+
+    S.w = cv.width;
+    S.h = cv.height;
+
+    S.groundY = Math.floor(S.h*0.82);
+    S.laneY = Math.floor(S.h*0.68);
+
+    const bw = Math.floor(S.w*0.11);
+    S.castleL.w = bw;
+    S.castleR.w = bw;
+    S.castleL.x = Math.floor(S.w*0.06);
+    S.castleR.x = Math.floor(S.w*0.94 - bw);
+  }
+  window.addEventListener("resize", resize, {passive:true});
+  resize();
+
+  // =========================
+  // 7) オーバーレイ
+  // =========================
+  function setOverlay(show, title, msg, sub){
+    overlay.style.display = show ? "flex" : "none";
+    if(title) card.querySelector("h1").textContent = title;
+    if(msg) card.querySelector("p").textContent = msg;
+    if(sub !== undefined) card.querySelector(".sub").textContent = sub;
+  }
+
+  // =========================
+  // 8) 画像ロード（失敗を特定できるように）
+  // =========================
+  function loadImage(src){
+    return new Promise((resolve, reject)=>{
+      const img = new Image();
+      img.onload = ()=>resolve(img);
+      img.onerror = ()=>reject(new Error("Failed to load: "+src));
+      img.src = src;
+    });
+  }
+
+  function listAssetPairs(){
+    const pairs = [];
+    const push = (k, src)=>pairs.push({k, src});
+
+    // bg
+    push("bg:main", ASSETS.bg.main);
+
+    // units
+    for(const [k,v] of Object.entries(ASSETS.ally))  push("ally:"+k, v);
+    for(const [k,v] of Object.entries(ASSETS.enemy)) push("enemy:"+k, v);
+
+    // fx
+    for(const [k,v] of Object.entries(ASSETS.fx)) push("fx:"+k, v);
+
+    // castles
+    for(const [k,v] of Object.entries(ASSETS.castle)) push("castle:"+k, v);
+
+    return pairs;
+  }
+
+  async function loadAllImages(){
+    const pairs = listAssetPairs();
+    const failed = [];
+
+    for(const a of pairs){
+      try{
+        const img = await loadImage(a.src);
+        S.img.set(a.k, img);
+      }catch(e){
+        failed.push(a.src);
+      }
+    }
+
+    if(failed.length){
+      S.ready = false;
+      S.lastError = failed.join("\n");
+      assetWarn.style.display = "block";
+      assetWarn.textContent =
+        "画像ロード失敗（ファイル名/場所を確認）:\n" + failed.join("\n");
+      throw new Error("Image load failed");
+    }
+
+    S.bgImg = S.img.get("bg:main");
+    S.ready = true;
+  }
+
+  // =========================
+  // 9) 音声（BGM/SE）
+  // =========================
+  function buildAudio(){
+    // ブラウザ制限：ユーザー操作後に play() する必要がある。
+    S.bgm = new Audio(ASSETS.sound.bgm);
+    S.bgm.loop = true;
+    S.bgm.volume = 0.45;
+
+    // SEは乱打しても切れにくいように簡易プール
+    const mkPool = (src, n)=>{
+      const arr = [];
+      for(let i=0;i<n;i++){
+        const a = new Audio(src);
+        a.volume = 0.85;
+        arr.push(a);
+      }
+      return arr;
+    };
+    S.sePool.ken = mkPool(ASSETS.sound.ken, 4);
+    S.sePool.gan = mkPool(ASSETS.sound.gan, 4);
+    S.sePool.bom = mkPool(ASSETS.sound.bom, 4);
+
+    S.audioReady = true;
+  }
+
+  function playSE(key){
+    if(!S.audioReady) return;
+    const pool = S.sePool[key];
+    if(!pool || !pool.length) return;
+    // 空いてるものを探す
+    let a = pool.find(x=>x.paused || x.ended);
+    if(!a) a = pool[0];
+    try{
+      a.currentTime = 0;
+      a.play();
+    }catch(_){}
+  }
+
+  function ensureBGM(){
+    // start/pause時に呼ぶ。再生できない場合は無視（ユーザー操作後なら再生できる）
+    if(!S.audioReady) return;
+    if(S.bgm.paused){
+      try{
+        S.bgm.play();
+      }catch(_){}
+    }
+  }
+
+  function pauseBGM(){
+    if(!S.audioReady) return;
+    try{ S.bgm.pause(); }catch(_){}
+  }
+
+  // =========================
+  // 10) 難易度選択
+  // =========================
+  function applyMode(mode){
+    S.mode = mode;
+    S.D = DIFFICULTY[mode];
+
+    // UI
+    const easy = (mode==="easy");
+    modeEasyBtn.classList.toggle("active", easy);
+    modeHardBtn.classList.toggle("active", !easy);
+    pickEasyBtn.classList.toggle("active", easy);
+    pickHardBtn.classList.toggle("active", !easy);
+    modeExplain.textContent = S.D.label;
+
+    // 走行中は変更させない（仕様）
+    if(S.running) return;
+
+    // energy
+    S.eMax = S.D.energyMax;
+
+    // castles
+    S.castleL.hpMax = S.castleR.hpMax = S.D.castleHp;
+    S.castleL.hp = S.castleL.hpMax;
+    S.castleR.hp = S.castleR.hpMax;
+
+    syncHUD();
+  }
+
+  function bindModeButtons(){
+    const setEasy = ()=>applyMode("easy");
+    const setHard = ()=>applyMode("hard");
+    modeEasyBtn.addEventListener("click", setEasy);
+    modeHardBtn.addEventListener("click", setHard);
+    pickEasyBtn.addEventListener("click", setEasy);
+    pickHardBtn.addEventListener("click", setHard);
+  }
+  bindModeButtons();
+
+  // =========================
+  // 11) UI（召喚ボタン）
+  // =========================
+  const BTN = [];
+  function buildButtons(){
+    unitPanel.innerHTML = "";
+    BTN.length = 0;
+
+    const keys = ["ken","gun","bom"];
+    keys.forEach((key, idx)=>{
+      const def = UNITS_BASE.ally[key];
+      const b = document.createElement("button");
+      b.className = "btn";
+      b.innerHTML = `
+        <div class="btnTitle">${idx+1}. ${def.name}</div>
+        <div class="btnMeta">
+          <span>コスト: <b>${def.cost}</b></span>
+          <span>HP ${def.hp} / ATK ${def.atk}</span>
+        </div>
+      `;
+      b.addEventListener("pointerdown", (e)=>{
+        if(e.pointerType==="mouse" && e.button!==0) return;
+        e.preventDefault?.();
+        spawnUnit("ally", key);
+      }, {passive:false});
+      unitPanel.appendChild(b);
+      BTN.push({key, el:b});
+    });
+  }
+
+  function updateButtons(){
+    for(const b of BTN){
+      const def = UNITS_BASE.ally[b.key];
+      const ok = S.running && !S.ended && S.e >= def.cost;
+      b.el.disabled = !ok;
+      b.el.classList.toggle("disabled", !ok);
+    }
+  }
+
+  // =========================
+  // 12) リセット / 開始 / 一時停止 / 終了
+  // =========================
+  function reset(){
+    S.running = false;
+    S.ended = false;
+    S.t = 0;
+
+    S.e = 0;
+    S.eMax = S.D.energyMax;
+
+    S.aiBudget = 0;
+    S.aiThink = 0;
+
+    S.units.length = 0;
+    S.projectiles.length = 0;
+    S.effects.length = 0;
+
+    S.castleL.hpMax = S.castleR.hpMax = S.D.castleHp;
+    S.castleL.hp = S.castleL.hpMax;
+    S.castleR.hp = S.castleR.hpMax;
+
+    toggleBtn.textContent = "▶ 開始";
+    setOverlay(true,
+      "画像ユニット戦争（にゃんこ風・簡易）",
+      S.ready ? "準備完了。難易度を選んで開始してください。" : "画像をロード中です…",
+      "右下「開始」または Space でスタート"
+    );
+
+    syncHUD();
+  }
+
+  function start(){
+    if(!S.ready){
+      logEl.textContent = "画像ロードが未完了です（assetWarn参照）";
+      return;
+    }
+    if(!S.audioReady){
+      buildAudio(); // 初回のみ
+    }
+
+    S.running = true;
+    S.ended = false;
+    toggleBtn.textContent = "⏸ 一時停止";
+    setOverlay(false);
+
+    // BGMは「開始操作」に紐づけて再生（仕様対応）
+    ensureBGM();
+  }
+
+  function pause(){
+    S.running = false;
+    toggleBtn.textContent = "▶ 再開";
+    setOverlay(true, "一時停止", "再開するには「再開」を押してください。", "");
+    pauseBGM();
+  }
+
+  function end(winner){
+    S.running = false;
+    S.ended = true;
+    toggleBtn.textContent = "↻ リスタート";
+    const msg = winner==="ally" ? "勝利：敵城を破壊しました。" : "敗北：自城が破壊されました。";
+    setOverlay(true, "決着", msg, "↻ リスタートで最初から");
+    pauseBGM();
+  }
+
+  toggleBtn.addEventListener("click", ()=>{
+    if(S.ended){ reset(); start(); return; }
+    if(!S.running) start(); else pause();
+  });
+
+  window.addEventListener("keydown", (e)=>{
+    const k = e.key.toLowerCase();
+    if(k==="1") spawnUnit("ally","ken");
+    if(k==="2") spawnUnit("ally","gun");
+    if(k==="3") spawnUnit("ally","bom");
+    if(k===" "){
+      e.preventDefault();
+      if(S.ended){ reset(); start(); return; }
+      if(!S.running) start(); else pause();
+    }
+  });
+
+  // =========================
+  // 13) ユニット生成
+  // =========================
+  function getUnitDef(side, type){
+    // 難易度補正は「敵側に適用」
+    const base = UNITS_BASE[side][type];
+    if(side==="enemy"){
+      return {
+        ...base,
+        hp: Math.max(1, Math.round(base.hp * S.D.enemyHpRate)),
+        atk: Math.max(1, Math.round(base.atk * S.D.enemyAtkRate)),
+        spd: base.spd * S.D.enemySpdRate
+      };
+    }
+    return {...base};
+  }
+
+  function makeUnit(side, type){
+    const def = getUnitDef(side, type);
+    const imgKey = side+":"+type;
+    const img = S.img.get(imgKey);
+
+    const baseSize = Math.floor(Math.min(S.w, S.h) * 0.08);
+    const size = clamp(baseSize, 42*S.dpr, 92*S.dpr);
+
+    const x = (side==="ally")
+      ? (S.castleL.x + S.castleL.w + size*0.55)
+      : (S.castleR.x - size*0.55);
+
+    const dir = (side==="ally") ? 1 : -1;
+
+    return {
+      id: Math.random().toString(16).slice(2),
+      side,
+      type,
+      kind: def.kind,
+      x,
+      y: S.laneY,
+      size,
+      dir,
+      hp: def.hp,
+      hpMax: def.hp,
+      atk: def.atk,
+      atkSec: def.atkSec,
+      atkCD: 0,
+      spd: def.spd * S.dpr * dir,
+      range: def.range * S.dpr,
+      img,
+    };
+  }
+
+  function spawnUnit(side, type){
+    if(!S.running || S.ended) return;
+
+    if(side==="ally"){
+      const def = getUnitDef("ally", type);
+      if(S.e < def.cost) return;
+      S.e -= def.cost;
+    }
+
+    S.units.push(makeUnit(side, type));
+    syncHUD();
+  }
+
+  // =========================
+  // 14) 敵AI（召喚）
+  // =========================
+  function aiStep(dt){
+    // budget regen
+    S.aiBudget = clamp(S.aiBudget + S.D.aiBudgetPerSec*dt, 0, S.D.aiMaxBudget);
+
+    S.aiThink -= dt;
+    if(S.aiThink > 0) return;
+
+    S.aiThink = rnd(S.D.aiThinkMin, S.D.aiThinkMax);
+
+    // 盤面圧で選択（簡易）
+    const allyCount = S.units.filter(u=>u.side==="ally").length;
+    const enemyCount= S.units.filter(u=>u.side==="enemy").length;
+    const allyNearEnemy = S.units.filter(u=>u.side==="ally" && u.x > S.w*0.55).length;
+
+    let pick;
+    if(allyNearEnemy >= 2 && enemyCount < allyCount) pick = "teki3";
+    else if(enemyCount < allyCount) pick = Math.random()<0.62 ? "teki2" : "teki1";
+    else pick = Math.random()<0.58 ? "teki1" : (Math.random()<0.78 ? "teki2" : "teki3");
+
+    const cost = getUnitDef("enemy", pick).cost; // costは base と同じ
+    if(S.aiBudget >= cost){
+      S.aiBudget -= cost;
+      spawnUnit("enemy", pick);
+    }
+  }
+
+  // =========================
+  // 15) ターゲット探索（重要：近距離が止まるバグを潰す）
+  // =========================
+  function findTarget(u){
+    const dir = u.dir;
+
+    // 最も近い前方の敵ユニット
+    let best = null;
+    let bestD = Infinity;
+
+    for(const v of S.units){
+      if(v.hp<=0) continue;
+      if(v.side===u.side) continue;
+      const d = (v.x - u.x) * dir;
+      if(d >= 0 && d < bestD){
+        bestD = d;
+        best = v;
+      }
+    }
+
+    // 城も候補
+    const castle = (u.side==="ally") ? S.castleR : S.castleL;
+    const castleFrontX = (u.side==="ally") ? castle.x : (castle.x + castle.w);
+    const dCastle = (castleFrontX - u.x) * dir;
+
+    if(dCastle >= 0 && dCastle < bestD){
+      bestD = dCastle;
+      best = { isCastle:true, castleRef: castle, x: castleFrontX, size: castle.w*0.8 };
+    }
+
+    // ★重要：何もいなければ target=null のまま返す
+    return { target: best, dist: bestD };
+  }
+
+  // =========================
+  // 16) 攻撃演出（剣/銃/爆弾）
+  // =========================
+  function spawnEffect(kind, x, y, size, dur){
+    S.effects.push({
+      kind,
+      x, y,
+      size,
+      t: 0,
+      dur: Math.max(0.05, dur||0.22),
+    });
+  }
+
+  function spawnBullet(fromUnit, targetX){
+    const spd = 720 * S.dpr * S.D.projectileSpeedRate;
+    const dir = fromUnit.dir;
+
+    const y = fromUnit.y;
+    const x = fromUnit.x + dir * (fromUnit.size*0.38);
+
+    S.projectiles.push({
+      type:"bullet",
+      side: fromUnit.side,
+      x, y,
+      vx: dir * spd,
+      vy: 0,
+      size: fromUnit.size*0.36,
+      atk: fromUnit.atk,
+      ttl: 1.6,
+      hitRadius: fromUnit.size*0.24
+    });
+
+    playSE("gan");
+  }
+
+  function spawnBombArc(fromUnit){
+    // 爆弾は「最前線に向けて放物線」
+    const dir = fromUnit.dir;
+    const x0 = fromUnit.x + dir*(fromUnit.size*0.38);
+    const y0 = fromUnit.y - fromUnit.size*0.15;
+
+    // 目標は「一番近い敵/城の手前」
+    const { target } = findTarget(fromUnit);
+    let x1;
+    if(target){
+      x1 = target.x;
+    }else{
+      // いなければ敵城方向へ
+      x1 = (fromUnit.side==="ally") ? (S.castleR.x) : (S.castleL.x + S.castleL.w);
+    }
+
+    // 飛行時間
+    const flight = 0.75 / S.D.projectileSpeedRate;
+    const vx = (x1 - x0) / flight;
+
+    // 放物線：頂点を上げる（重力で落とす）
+    const peak = 220 * S.dpr;
+    const g = (2*peak) / (flight*flight); // 単純化
+    const vy0 = -g * flight;              // 往復でそれっぽく
+
+    S.projectiles.push({
+      type:"bomb",
+      side: fromUnit.side,
+      x: x0, y: y0,
+      vx, vy: vy0,
+      g,
+      size: fromUnit.size*0.44,
+      atk: fromUnit.atk,
+      ttl: 1.2,
+      hitRadius: fromUnit.size*0.30,
+      explodeRadius: fromUnit.size*0.90
+    });
+
+    // 爆弾は発射音をSEにするか迷うが、仕様通り爆発音のみ鳴らす
+  }
+
+  function doMeleeAttack(u, target){
+    // 剣演出：一瞬だけ軌道画像
+    const fxKey = (u.side==="ally") ? "fx:kenSwing" : "fx:enemySwing";
+    const img = S.img.get(fxKey);
+
+    // エフェクト位置を少し前方へ
+    const fxX = u.x + u.dir * (u.size*0.35);
+    const fxY = u.y - u.size*0.10;
+
+    S.effects.push({
+      kind: (u.side==="ally" ? "kenSwing" : "enemySwing"),
+      img,
+      x: fxX,
+      y: fxY,
+      size: u.size*0.95,
+      t: 0,
+      dur: 0.18
+    });
+
+    playSE("ken");
+    applyDamage(u, target, u.atk);
+  }
+
+  function doRangedAttack(u){
+    spawnBullet(u);
+  }
+
+  function doArcAttack(u){
+    spawnBombArc(u);
+  }
+
+  // =========================
+  // 17) ダメージ処理
+  // =========================
+  function applyDamage(attacker, target, dmg){
+    if(!target) return;
+    if(target.isCastle){
+      target.castleRef.hp = Math.max(0, target.castleRef.hp - dmg);
+    }else{
+      target.hp = Math.max(0, target.hp - dmg);
+    }
+  }
+
+  // =========================
+  // 18) プロジェクタイル更新（弾/爆弾/爆発）
+  // =========================
+  function updateProjectiles(dt){
+    for(let i=S.projectiles.length-1;i>=0;i--){
+      const p = S.projectiles[i];
+      p.ttl -= dt;
+
+      if(p.type==="bullet"){
+        p.x += p.vx*dt;
+        p.y += p.vy*dt;
+
+        // 当たり判定：前方の敵ユニット、または城
+        const hit = findProjectileHit(p);
+        if(hit){
+          applyDamage({side:p.side}, hit, p.atk);
+          S.projectiles.splice(i,1);
+          continue;
+        }
+
+        if(p.ttl<=0 || p.x<0 || p.x>S.w){
+          S.projectiles.splice(i,1);
+          continue;
+        }
+      }
+
+      if(p.type==="bomb"){
+        // 放物線
+        p.vy += p.g*dt;
+        p.x += p.vx*dt;
+        p.y += p.vy*dt;
+
+        // 地面付近 or ターゲット付近で爆発
+        const hit = findProjectileHit(p, true);
+        const groundHit = (p.y >= S.laneY + 40*S.dpr);
+
+        if(hit || groundHit || p.ttl<=0){
+          // 爆発エフェクト
+          const boomImg = S.img.get("fx:bombBoom");
+          S.effects.push({
+            kind:"boom",
+            img: boomImg,
+            x: p.x,
+            y: S.laneY - 10*S.dpr,
+            size: p.size*1.6,
+            t:0,
+            dur:0.28
+          });
+          playSE("bom");
+
+          // 範囲ダメージ
+          applyExplosionDamage(p);
+
+          S.projectiles.splice(i,1);
+          continue;
+        }
+
+        if(p.x< -200 || p.x>S.w+200){
+          S.projectiles.splice(i,1);
+          continue;
+        }
+      }
+    }
+  }
+
+  function findProjectileHit(p, isBomb){
+    const dir = (p.side==="ally") ? 1 : -1;
+
+    // 対象は反対サイド
+    const targetSide = (p.side==="ally") ? "enemy" : "ally";
+
+    // 城判定
+    const castle = (targetSide==="enemy") ? S.castleR : S.castleL;
+    const castleFrontX = (targetSide==="enemy") ? castle.x : (castle.x + castle.w);
+    const castleDist = Math.abs(p.x - castleFrontX);
+
+    if(castleDist < (p.hitRadius + castle.w*0.18)){
+      return {isCastle:true, castleRef: castle, x: castleFrontX, size: castle.w*0.8};
+    }
+
+    // ユニット判定：一番近いもの
+    let best=null, bestD=Infinity;
+    for(const u of S.units){
+      if(u.side!==targetSide) continue;
+      if(u.hp<=0) continue;
+      const d = Math.hypot(u.x - p.x, u.y - p.y);
+      if(d < bestD){
+        bestD = d; best = u;
+      }
+    }
+
+    // 弾は厳しめ、爆弾はやや甘め
+    const thr = isBomb ? (p.hitRadius*1.1) : p.hitRadius;
+
+    if(best && bestD <= thr){
+      return best;
+    }
+    return null;
+  }
+
+  function applyExplosionDamage(p){
+    const targetSide = (p.side==="ally") ? "enemy" : "ally";
+
+    // ユニット範囲
+    for(const u of S.units){
+      if(u.side!==targetSide) continue;
+      if(u.hp<=0) continue;
+      const d = Math.hypot(u.x - p.x, u.y - (S.laneY - 10*S.dpr));
+      if(d <= p.explodeRadius){
+        u.hp = Math.max(0, u.hp - p.atk);
+      }
+    }
+
+    // 城にも範囲
+    const castle = (targetSide==="enemy") ? S.castleR : S.castleL;
+    const castleFrontX = (targetSide==="enemy") ? castle.x : (castle.x + castle.w);
+    const dCastle = Math.abs(castleFrontX - p.x);
+    if(dCastle <= p.explodeRadius*0.9){
+      castle.hp = Math.max(0, castle.hp - p.atk);
+    }
+  }
+
+  // =========================
+  // 19) エフェクト更新
+  // =========================
+  function updateEffects(dt){
+    for(let i=S.effects.length-1;i>=0;i--){
+      const fx = S.effects[i];
+      fx.t += dt;
+      if(fx.t >= fx.dur){
+        S.effects.splice(i,1);
+      }
+    }
+  }
+
+  // =========================
+  // 20) 戦闘（移動・攻撃）  ※近距離前進バグはここで根絶
+  // =========================
+  function step(dt){
+    S.t += dt;
+
+    // energy regen (ally)
+    S.e = clamp(S.e + S.D.energyRegen*dt, 0, S.eMax);
+
+    // enemy AI
+    aiStep(dt);
+
+    // cooldown
+    for(const u of S.units){
+      u.atkCD = Math.max(0, u.atkCD - dt);
+    }
+
+    // unit update
+    for(const u of S.units){
+      if(u.hp<=0) continue;
+
+      const { target, dist } = findTarget(u);
+
+      // ★修正点：ターゲットがいなければ必ず前進
+      if(!target){
+        u.x += u.spd*dt;
+        continue;
+      }
+
+      const hitRange = u.range + (u.size*0.40) + ((target.size||0)*0.25);
+      const inRange = dist <= hitRange;
+
+      if(inRange){
+        // 攻撃
+        if(u.atkCD <= 0){
+          u.atkCD = u.atkSec;
+
+          if(u.kind==="melee"){
+            doMeleeAttack(u, target);
+          }else if(u.kind==="ranged"){
+            // 銃：弾生成（当たったらダメージ）
+            doRangedAttack(u);
+          }else if(u.kind==="arc"){
+            // 爆弾：放物線で飛ばす → 着弾で範囲ダメ
+            doArcAttack(u);
+          }
+        }
+      }else{
+        // 前進（敵がいるが射程外）
+        u.x += u.spd*dt;
+      }
+    }
+
+    // projectile/effects
+    updateProjectiles(dt);
+    updateEffects(dt);
+
+    // remove dead units
+    for(let i=S.units.length-1;i>=0;i--){
+      if(S.units[i].hp<=0) S.units.splice(i,1);
+    }
+
+    // win/lose
+    if(S.castleR.hp<=0) end("ally");
+    else if(S.castleL.hp<=0) end("enemy");
+
+    syncHUD();
+  }
+
+  // =========================
+  // 21) 描画
+  // =========================
+  function drawBackground(){
+    // 背景画像があれば描画、無ければグラデ
+    if(S.bgImg){
+      // cover風
+      const iw = S.bgImg.width, ih = S.bgImg.height;
+      const cw = S.w, ch = S.h;
+      const ir = iw/ih;
+      const cr = cw/ch;
+      let sx=0, sy=0, sw=iw, sh=ih;
+      if(ir > cr){
+        // 横長：左右カット
+        sh = ih;
+        sw = ih*cr;
+        sx = (iw - sw)/2;
+      }else{
+        // 縦長：上下カット
+        sw = iw;
+        sh = iw/cr;
+        sy = (ih - sh)/2;
+      }
+      ctx.drawImage(S.bgImg, sx, sy, sw, sh, 0, 0, cw, ch);
+      // うっすら暗幕
+      ctx.fillStyle = "rgba(0,0,0,0.35)";
+      ctx.fillRect(0,0,S.w,S.h);
+    }else{
+      const g = ctx.createLinearGradient(0,0,0,S.h);
+      g.addColorStop(0,"#0b0f17");
+      g.addColorStop(1,"#101a2b");
+      ctx.fillStyle = g;
+      ctx.fillRect(0,0,S.w,S.h);
+    }
+
+    // ground
+    ctx.fillStyle = "rgba(255,255,255,0.10)";
+    ctx.fillRect(0,S.groundY,S.w,S.h-S.groundY);
+    ctx.fillStyle = "rgba(255,255,255,0.18)";
+    ctx.fillRect(0,S.groundY,S.w,Math.max(2,2*S.dpr));
+
+    // lane hint
+    ctx.globalAlpha = 0.25;
+    ctx.strokeStyle = "rgba(255,255,255,0.35)";
+    ctx.setLineDash([10*S.dpr, 10*S.dpr]);
+    ctx.beginPath();
+    ctx.moveTo(0,S.laneY + 32*S.dpr);
+    ctx.lineTo(S.w,S.laneY + 32*S.dpr);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+  }
+
+  function castleSpriteKey(side){
+    const c = (side==="ally") ? S.castleL : S.castleR;
+    const pct = c.hp / c.hpMax;
+
+    if(side==="ally"){
+      if(pct <= 0.12) return "castle:ally10";
+      if(pct <= 0.52) return "castle:ally50";
+      return "castle:ally100";
+    }else{
+      if(pct <= 0.12) return "castle:enemy10";
+      if(pct <= 0.52) return "castle:enemy50";
+      return "castle:enemy100";
+    }
+  }
+
+  function drawCastle(side){
+    const castle = (side==="ally") ? S.castleL : S.castleR;
+    const key = castleSpriteKey(side);
+    const img = S.img.get(key);
+
+    const w = castle.w;
+    const h = Math.floor(S.h*0.28);
+    const x = castle.x;
+    const y = S.laneY - Math.floor(S.h*0.17);
+
+    // shadow
+    ctx.globalAlpha = 0.20;
+    ctx.fillStyle = "#000";
+    ctx.fillRect(x, y+h-6*S.dpr, w, 8*S.dpr);
+    ctx.globalAlpha = 1;
+
+    if(img){
+      ctx.drawImage(img, x, y, w, h);
+    }else{
+      ctx.fillStyle = "rgba(255,255,255,.10)";
+      ctx.fillRect(x,y,w,h);
+    }
+
+    // hp bar
+    const pct = clamp(castle.hp/castle.hpMax, 0, 1);
+    ctx.fillStyle = "rgba(255,255,255,.12)";
+    ctx.fillRect(x, y-10*S.dpr, w, Math.max(6,6*S.dpr));
+    ctx.fillStyle = "rgba(180,220,255,.85)";
+    ctx.fillRect(x, y-10*S.dpr, w*pct, Math.max(6,6*S.dpr));
+  }
+
+  function drawUnit(u){
+    // shadow
+    ctx.globalAlpha = 0.22;
+    ctx.fillStyle = "#000";
+    ctx.beginPath();
+    ctx.ellipse(u.x, S.groundY + 8*S.dpr, u.size*0.35, u.size*0.12, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // sprite
+    const x = u.x - u.size/2;
+    const y = u.y - u.size/2;
+    if(u.img){
+      ctx.drawImage(u.img, x, y, u.size, u.size);
+    }else{
+      ctx.fillStyle = "rgba(255,255,255,.18)";
+      ctx.fillRect(x,y,u.size,u.size);
+    }
+
+    // hp bar
+    const pct = clamp(u.hp/u.hpMax, 0, 1);
+    const bw = u.size*0.9;
+    const bh = Math.max(4,4*S.dpr);
+    ctx.fillStyle = "rgba(255,255,255,.12)";
+    ctx.fillRect(u.x-bw/2, y-8*S.dpr, bw, bh);
+    ctx.fillStyle = "rgba(180,220,255,.85)";
+    ctx.fillRect(u.x-bw/2, y-8*S.dpr, bw*pct, bh);
+  }
+
+  function drawProjectile(p){
+    if(p.type==="bullet"){
+      const img = S.img.get("fx:bullet");
+      const sz = p.size;
+      const x = p.x - sz/2;
+      const y = p.y - sz/2;
+      if(img) ctx.drawImage(img, x, y, sz, sz);
+      else{
+        ctx.fillStyle = "rgba(255,255,255,0.85)";
+        ctx.fillRect(x,y,sz,Math.max(2,2*S.dpr));
+      }
+    }
+    if(p.type==="bomb"){
+      const img = S.img.get("fx:bombFly");
+      const sz = p.size;
+      const x = p.x - sz/2;
+      const y = p.y - sz/2;
+      if(img) ctx.drawImage(img, x, y, sz, sz);
+      else{
+        ctx.fillStyle = "rgba(255,220,120,0.9)";
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, sz*0.25, 0, Math.PI*2);
+        ctx.fill();
+      }
+    }
+  }
+
+  function drawEffects(){
+    for(const fx of S.effects){
+      const alpha = 1 - (fx.t / fx.dur);
+      ctx.globalAlpha = clamp(alpha, 0, 1);
+
+      const img = fx.img;
+      const sz = fx.size;
+      const x = fx.x - sz/2;
+      const y = fx.y - sz/2;
+
+      if(img){
+        ctx.drawImage(img, x, y, sz, sz);
+      }else{
+        // fallback
+        ctx.fillStyle = "rgba(255,255,255,0.55)";
+        ctx.fillRect(x,y,sz,sz);
+      }
+
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function render(){
+    drawBackground();
+    drawCastle("ally");
+    drawCastle("enemy");
+
+    // units
+    for(const u of S.units) drawUnit(u);
+
+    // projectiles
+    for(const p of S.projectiles) drawProjectile(p);
+
+    // effects
+    drawEffects();
+  }
+
+  // =========================
+  // 22) HUD
+  // =========================
+  function syncHUD(){
+    hpL.textContent = `自城HP: ${Math.ceil(S.castleL.hp)}`;
+    hpR.textContent = `敵城HP: ${Math.ceil(S.castleR.hp)}`;
+    energyBar.style.width = `${(S.e/S.eMax)*100}%`;
+    updateButtons();
+
+    // log簡易
+    if(S.ready){
+      logEl.textContent =
+        `Mode: ${S.D.name} / エネルギー: ${S.e.toFixed(1)}/${S.eMax} / 敵予算:${S.aiBudget.toFixed(1)} / Units:${S.units.length}`;
+    }
+  }
+
+  // =========================
+  // 23) ループ
+  // =========================
+  let last = performance.now();
+  function loop(now){
+    const dt = Math.min(0.033, (now-last)/1000);
+    last = now;
+
+    if(S.running && !S.ended){
+      step(dt);
+    }
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  // =========================
+  // 24) 初期化
+  // =========================
+  buildButtons();
+  applyMode("easy"); // default
+  reset();
+  requestAnimationFrame(loop);
+
+  // 初回ロード
+  loadAllImages().then(()=>{
+    logEl.textContent = "画像ロード完了";
+    assetWarn.style.display = "none";
+    reset();
+  }).catch((e)=>{
+    console.error(e);
+    logEl.textContent = "画像ロード失敗：assetWarn参照";
+    setOverlay(true, "エラー",
+      "画像が読み込めません。public_html/img/ 内のファイル名が正しいか確認してください。",
+      ""
+    );
+  });
+
+})();
+</script>
+</body>
+</html>
